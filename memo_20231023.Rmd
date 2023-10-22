@@ -1,0 +1,226 @@
+---
+title: "RP Memo"
+output: html_document
+date: "2023-10-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 10)
+
+library(data.table)
+library(stringr)
+library(ggplot2)
+library(kableExtra)
+
+```
+
+```{r load, include=FALSE}
+
+setwd("~/Documents/Michigan/PUBPOL 712/rp/")
+
+rawdatadir = "./raw_data/"
+workdatadir = "./working_data/"
+outdir = "./output/"
+codedir = "./code/"
+
+district_assessment = fread(paste0(workdatadir, 'district_assessment.csv'))
+
+```
+
+```{r prep, include=FALSE}
+
+# get weighted means of proficient by year/subject/cohort
+stats = district_assessment[!is.na(letrs_cohort), .(mean = weighted.mean(as.numeric(glp_pct), as.numeric(den), na.rm = TRUE)), by=c('letrs_cohort', 'reporting_year', 'subject')]
+
+# convert cohort to factor for visualization
+stats[, letrs_cohort := factor(letrs_cohort)]
+
+# add missing values for 2020  
+stats_2020 = unique(stats[, .(letrs_cohort, subject, reporting_year = 2020, mean = NA)])
+
+stats = rbind(stats,
+              stats_2020)
+
+# define variables to plot
+plot_vars = c('RD03', 'RD04', 'RD05', 'RD06', 'RD07', 'RD08', 'EOG')
+
+counts = district_assessment[!is.na(letrs_cohort), .(count = weighted.mean(as.numeric(glp_pct), as.numeric(den), na.rm = TRUE)), by=c('letrs_cohort', 'reporting_year', 'subject')]
+
+```
+
+### Time series
+
+```{r ts, echo=FALSE, warning=FALSE}
+
+for(v in plot_vars) {
+  
+  p = ggplot(stats[subject == v], aes(x = reporting_year, y = mean, group = letrs_cohort, color = letrs_cohort)) +
+    geom_line(aes(linetype = letrs_cohort)) + 
+    geom_point() +   
+    theme_classic() + 
+    labs(x = 'School year', 
+         y = 'Percent',
+         title = paste0(v, ' percent at/above level 3, weighted average within cohort'),
+         caption = 'School year 2018 = 2017/18') +
+    labs(color  = 'LETRS cohort', linetype = 'LETRS cohort') +
+    scale_y_continuous(breaks = seq(35, 65, 5)) +
+    coord_cartesian(ylim=c(35,65))
+
+  print(p)
+  
+}
+
+```
+```{r den_check, echo=FALSE}
+
+district_den_check = district_assessment[!is.na(letrs_cohort) & subject == 'EOG' & reporting_year %in% c(2019, 2021, 2022), .(agency_code, reporting_year, den)]
+district_den_check_wide = dcast(district_den_check, agency_code ~ reporting_year, value.var = 'den')
+district_den_check_wide[, diff_2021_2019 := `2021` - `2019`]
+district_den_check_wide[, diff_2022_2021 := `2022` - `2021`]
+
+ggplot(district_assessment[!is.na(letrs_cohort) & subject == 'EOG'], aes(x = reporting_year, y = den, group = agency_code)) +
+  geom_line() +
+  theme(legend.position="none")
+
+ggplot(district_den_check_wide, aes(x = diff_2021_2019, y = diff_2022_2021)) +
+  geom_point(alpha = .5)
+```
+
+### Effect estimate summary statistics
+
+#### Mean effect estimates
+
+```{r means, echo=FALSE}
+
+means = rbind(transpose(simulated_data[est_type %in% c('d10-d00', 'd01-d00', 'd11-d00'), 
+                                       lapply(.SD, mean), by=c('est_type'), 
+                                       .SDcols = outcomes], 
+                        keep.names = 'outcome', 
+                        make.names = 'est_type'),
+              data.table(outcome = 'parameter benchmark', `d01-d00` = -.05, `d10-d00` = -.10, `d11-d00` = -.15))
+
+kable(means, 
+      booktabs = TRUE,
+      align = paste0(c('r', rep('c', dim(means)[2])), collapse = '')) %>% 
+  kable_styling(full_width = F, 
+                position = 'center', 
+                latex_options = c('scale_down', 'repeat_header'), 
+                repeat_header_continued = '\\textit{(Continued on next page...)}')
+```
+
+#### Median effect estimates
+
+```{r medians, echo=FALSE}
+
+medians = rbind(transpose(simulated_data[est_type %in% c('d10-d00', 'd01-d00', 'd11-d00'), 
+                                         lapply(.SD, median), by=c('est_type'), 
+                                         .SDcols = outcomes], 
+                          keep.names = 'outcome', 
+                          make.names = 'est_type'),
+                data.table(outcome = 'parameter benchmark', `d01-d00` = -.05, `d10-d00` = -.10, `d11-d00` = -.15))
+
+kable(medians, 
+      booktabs = TRUE,
+      align = paste0(c('r', rep('c', dim(means)[2])), collapse = '')) %>% 
+  kable_styling(full_width = F, 
+                position = 'center', 
+                latex_options = c('scale_down', 'repeat_header'), 
+                repeat_header_continued = '\\textit{(Continued on next page...)}')
+
+```
+
+### $d_{1, 0} - d_{0, 0}$ (direct effect) estimates:
+
+Treatment effect parameter is -.10.
+
+```{r d10_d00, echo=FALSE}
+
+for(o in outcomes) {
+  
+  ## whole distribution
+  whole_dist = ggplot(simulated_data[est_type == 'd10-d00'], aes(x =get(o))) +
+    geom_histogram(binwidth = 0.1, alpha = .75) +
+    labs(x = 'Effect estimate', 
+         title = paste0(o, ' effect estimate, distribution over 1,000 re-simulations, d_{1, 0} - d_{0, 0}'))
+  
+  ## zoom in on [-1, 1]
+  zoom_dist = ggplot(simulated_data[est_type == 'd10-d00'], aes(x = get(o))) +
+    geom_histogram(binwidth = 0.05, alpha = .75) +
+    coord_cartesian(xlim=c(-1,1)) +
+    geom_vline(xintercept=-0.10) +
+    geom_vline(xintercept = mean(simulated_data[est_type == 'd10-d00', get(o)]), color = 'red', linetype = 'longdash') +
+    geom_vline(xintercept = median(simulated_data[est_type == 'd10-d00', get(o)]), color = 'blue', linetype = 'dotted') +
+    labs(x = 'Effect estimate', 
+         title = paste0(o, ' effect estimate, distribution over 1,000 re-simulations, d_{1, 0} - d_{0, 0} (zoom [-1, 1])'),
+         caption = 'black line: parameter value; red dashed line: mean value; blue dotted line: median value')
+  
+  print(whole_dist)
+  print(zoom_dist)
+  
+}
+
+```
+
+### $d_{0, 1} - d_{0, 0}$ (indirect effect) estimates:
+
+Treatment effect parameter is -.05.
+
+```{r d01_d00, echo=FALSE}
+
+for(o in outcomes) {
+  
+  ## whole distribution
+  whole_dist = ggplot(simulated_data[est_type == 'd01-d00'], aes(x =get(o))) +
+    geom_histogram(binwidth = 0.1, alpha = .75) +
+    labs(x = 'Effect estimate', 
+         title = paste0(o, ' effect estimate, distribution over 1,000 re-simulations, d_{0, 1} - d_{0, 0}'))
+  
+  ## zoom in on [-1, 1]
+  zoom_dist = ggplot(simulated_data[est_type == 'd01-d00'], aes(x = get(o))) +
+    geom_histogram(binwidth = 0.05, alpha = .75) +
+    coord_cartesian(xlim=c(-1,1)) +
+    geom_vline(xintercept=-0.05) +
+    geom_vline(xintercept = mean(simulated_data[est_type == 'd01-d00', get(o)]), color = 'red', linetype = 'longdash') +
+    geom_vline(xintercept = median(simulated_data[est_type == 'd01-d00', get(o)]), color = 'blue', linetype = 'dotted') +
+    labs(x = 'Effect estimate', 
+         title = paste0(o, ' effect estimate, distribution over 1,000 re-simulations, d_{0, 1} - d_{0, 0} (zoom [-1, 1])'),
+         caption = 'black line: parameter value; red dashed line: mean value; blue dotted line: median value')
+  
+  print(whole_dist)
+  print(zoom_dist)
+  
+}
+
+```
+
+### $d_{1, 1} - d_{0, 0}$ (direct + indirect effect) estimates:
+
+Treatment effect parameter is -.15.
+
+```{r d11_d00, echo=FALSE}
+
+for(o in outcomes) {
+  
+  ## whole distribution
+  whole_dist = ggplot(simulated_data[est_type == 'd11-d00'], aes(x =get(o))) +
+    geom_histogram(binwidth = 0.1, alpha = .75) +
+    labs(x = 'Effect estimate', 
+         title = paste0(o, ' effect estimate, distribution over 1,000 re-simulations, d_{1, 1} - d_{0, 0}'))
+  
+  ## zoom in on [-1, 1]
+  zoom_dist = ggplot(simulated_data[est_type == 'd11-d00'], aes(x = get(o))) +
+    geom_histogram(binwidth = 0.05, alpha = .75) +
+    coord_cartesian(xlim=c(-1,1)) +
+    geom_vline(xintercept=-0.15) +
+    geom_vline(xintercept = mean(simulated_data[est_type == 'd11-d00', get(o)]), color = 'red', linetype = 'longdash') +
+    geom_vline(xintercept = median(simulated_data[est_type == 'd11-d00', get(o)]), color = 'blue', linetype = 'dotted') +
+    labs(x = 'Effect estimate', 
+         title = paste0(o, ' effect estimate, distribution over 1,000 re-simulations, d_{1, 1} - d_{0, 0} (zoom [-1, 1])'),
+         caption = 'black line: parameter value; red dashed line: mean value; blue dotted line: median value')
+  
+  print(whole_dist)
+  print(zoom_dist)
+  
+}
+
+```
