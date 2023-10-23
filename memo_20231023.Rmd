@@ -1,5 +1,6 @@
 ---
 title: "RP Memo"
+author: "Kenny Hofmeister"
 output: html_document
 date: "2023-10-23"
 ---
@@ -24,6 +25,8 @@ outdir = "./output/"
 codedir = "./code/"
 
 district_assessment = fread(paste0(workdatadir, 'district_assessment.csv'))
+district_school_counts = fread(paste0(workdatadir, 'district_school_counts.csv'))
+district_student_counts = fread(paste0(workdatadir, 'district_student_counts.csv'))
 
 ```
 
@@ -48,7 +51,89 @@ counts = district_assessment[!is.na(letrs_cohort), .(count = weighted.mean(as.nu
 
 ```
 
-### Time series
+## Notes
+
+This memo presents some basic descriptive statistics about the three cohorts that make up North Carolina's LETRS training implementation. There are `r nrow(unique(district_assessment[letrs_cohort==1, .(lea_code)]))` districts in the first cohort,
+`r nrow(unique(district_assessment[letrs_cohort==2, .(lea_code)]))` districts in the second, and `r nrow(unique(district_assessment[letrs_cohort==3, .(lea_code)]))` in the third. The first cohort began training in fall 2021, the second in winter 2021, and the third in summer 2022. All data are publicly available and were downloaded from the [NCDPI website](https://www.dpi.nc.gov/data-reports).
+
+## Tables
+
+The first table describes the number of schools, overall and by type, for each cohort. E refers to elementary schools (grades PK:05), M to middle schools (06:08), and H to high schools (09:12). Combinations of E, M, H indicate that the school serves students whose grades span the combination (for example, E/M serves grades PK:08). Title I is a proportion of all schools in the cohort.
+
+The second table describes the number of students, total and on average, for each cohort. The first column lists the total number of students enrolled at districts in each cohort. The next two columns list the average number of students per district and per elementary school within each cohort. The last two columns list the median number of students per district and per elementary school. Note that only the average number of elementary school students is reported for each district, so the mean/median represent the average/median of these reported averages. 
+
+A few things stand out:
+  
+  * Cohort 3 includes nearly twice as many districts but not twice as many elementary schools or students, which suggests that the cohort 3 districts are smaller than cohort 1 and 2 districts
+    + The average number of students in a cohort 3 district is smaller than in cohorts 1 and 2, but the median is larger, suggesting that there are a few very large districts in cohorts
+      1 and 2
+    + Cohort 3 does have slightly higher elementary school enrollment counts, however
+  * Cohort 3 has a substantially larger proportion of Title I schools 
+  * All cohorts experienced substantial enrollment declines between SY20 and SY21
+
+```{r tab, echo=FALSE}
+
+# prep school counts
+district_school_counts_bycohort = district_school_counts[, .(total = sum(school_n, na.rm = TRUE)), by=c('letrs_cohort', 'year', 'category')]
+district_school_counts_bycohort[, category := factor(category, levels = c('elementary', 'elem/middle', 'elem/middle/high', 'middle', 'middle/high', 'high', 'title i', 'all'))]
+setorder(district_school_counts_bycohort, category)
+district_school_counts_bycohort_wide = dcast(district_school_counts_bycohort, letrs_cohort + year ~ category, value.var = 'total')
+district_school_counts_bycohort_wide[, `title i` := round(`title i` / all, 2)]
+setorder(district_school_counts_bycohort_wide, year, letrs_cohort)
+
+# kable(district_school_counts_bycohort_wide[year %in% c(2018, 2019, 2020, 2021, 2022), -c('year')], 
+#       booktabs = TRUE,
+#       align = paste0(c('r', rep('c', dim(district_school_counts_bycohort_wide)[2])), collapse = ''),
+#       col.names = c('LETRS cohort', 'E', 'E/M', 'E/M/H', 'M', 'M/H', 'H', 'Title I', 'All')) %>% 
+#   kable_styling(full_width = F, 
+#                 position = 'center') %>%
+#   group_rows('2018', 1, 3) %>%
+#   group_rows('2019', 4, 6) %>%
+#   group_rows('2020', 7, 9) %>%
+#   group_rows('2021', 10, 12) %>%
+#   group_rows('2022', 13, 15)
+
+kable(district_school_counts_bycohort_wide[year %in% c(2021), -c('year')], 
+      booktabs = TRUE,
+      align = paste0(c('r', rep('c', dim(district_school_counts_bycohort_wide)[2])), collapse = ''),
+      col.names = c('LETRS cohort', 'E', 'E/M', 'E/M/H', 'M', 'M/H', 'H', 'Title I prop.', 'All'),
+      caption = 'School counts, SY2020-21') %>% 
+  kable_styling(full_width = F, 
+                position = 'center')
+
+# prep student counts
+district_student_counts_bycohort = district_student_counts[, .(total = sum(avg_student_num),
+                                                               mean = round(mean(avg_student_num)),
+                                                               median = round(median(avg_student_num))),
+                                                           by=c('letrs_cohort', 'year', 'category')]
+district_student_counts_bycohort = district_student_counts_bycohort[category %in% c('all', 'elementary') & year %in% seq(2018, 2022)]
+district_student_counts_bycohort_wide = dcast(district_student_counts_bycohort, letrs_cohort + year ~ category, value.var = c('total', 'mean', 'median'))
+district_student_counts_bycohort_wide[, total_elementary := NULL]
+setorder(district_student_counts_bycohort_wide, year, letrs_cohort)
+
+kable(district_student_counts_bycohort_wide[, -c('year')], 
+      booktabs = TRUE,
+      align = paste0(c('r', rep('c', dim(district_student_counts_bycohort_wide)[2])), collapse = ''),
+      col.names = c('LETRS cohort', 'Total, all schools', 'District', 'Elementary', 'District', 'Elementary'),
+      caption = 'Student counts') %>% 
+  kable_styling(full_width = F, 
+                position = 'center') %>%
+  group_rows('2018', 1, 3) %>%
+  group_rows('2019', 4, 6) %>%
+  group_rows('2020', 7, 9) %>%
+  group_rows('2021', 10, 12) %>%
+  group_rows('2022', 13, 15) %>%
+  add_header_above(c(' ' = 2, 'Mean enrl' = 2, 'Median enrl' = 2))
+
+```
+
+## Time series: test scores
+
+The following plots describe the proportion of students who score proficient or above on annual standardized tests. Assessment data are publicly available (via school accountability datasets) starting in 2017-18, and there are no test scores available for the 2019-20 school year. RD03 is the third grade end-of-grade standardized assessment, RD04 is the fourth grade assessment, and so forth. "EOG" is a composite of all end-of-grade standardized tests administered (reading, math, science) at all grades (3-8). To calculate the cohort proportion, I take the mean of each district's proportion, with each district proportion weighted by the total number of students who took each test in the district in a given year.
+
+In terms of selection, relative trends do not suggest a monotonic relationship between student achievement and cohort choice. Cohort 3, the latest cohort, consistently has the lowest proportion of students testing proficient on reading assessments, while cohort 2 (which followed shortly after cohort 1) consistently has the highest proportion. 
+
+It is difficult to assess the parallel trends assumption from these plots: the proficient proportions for RD03 are roughly parallel across cohorts, but this is not the case for RD04. Cohorts 1 and 2 are basically identical on the EOG composite pre-pandemic, but separate after 2019-20. All cohorts see a substantial decline in the proportion of students testing proficient after 2020-19. 
 
 ```{r ts, echo=FALSE, warning=FALSE}
 
@@ -71,156 +156,21 @@ for(v in plot_vars) {
 }
 
 ```
+
+
 ```{r den_check, echo=FALSE}
 
-district_den_check = district_assessment[!is.na(letrs_cohort) & subject == 'EOG' & reporting_year %in% c(2019, 2021, 2022), .(agency_code, reporting_year, den)]
-district_den_check_wide = dcast(district_den_check, agency_code ~ reporting_year, value.var = 'den')
-district_den_check_wide[, diff_2021_2019 := `2021` - `2019`]
-district_den_check_wide[, diff_2022_2021 := `2022` - `2021`]
-
-ggplot(district_assessment[!is.na(letrs_cohort) & subject == 'EOG'], aes(x = reporting_year, y = den, group = agency_code)) +
-  geom_line() +
-  theme(legend.position="none")
-
-ggplot(district_den_check_wide, aes(x = diff_2021_2019, y = diff_2022_2021)) +
-  geom_point(alpha = .5)
-```
-
-### Effect estimate summary statistics
-
-#### Mean effect estimates
-
-```{r means, echo=FALSE}
-
-means = rbind(transpose(simulated_data[est_type %in% c('d10-d00', 'd01-d00', 'd11-d00'), 
-                                       lapply(.SD, mean), by=c('est_type'), 
-                                       .SDcols = outcomes], 
-                        keep.names = 'outcome', 
-                        make.names = 'est_type'),
-              data.table(outcome = 'parameter benchmark', `d01-d00` = -.05, `d10-d00` = -.10, `d11-d00` = -.15))
-
-kable(means, 
-      booktabs = TRUE,
-      align = paste0(c('r', rep('c', dim(means)[2])), collapse = '')) %>% 
-  kable_styling(full_width = F, 
-                position = 'center', 
-                latex_options = c('scale_down', 'repeat_header'), 
-                repeat_header_continued = '\\textit{(Continued on next page...)}')
-```
-
-#### Median effect estimates
-
-```{r medians, echo=FALSE}
-
-medians = rbind(transpose(simulated_data[est_type %in% c('d10-d00', 'd01-d00', 'd11-d00'), 
-                                         lapply(.SD, median), by=c('est_type'), 
-                                         .SDcols = outcomes], 
-                          keep.names = 'outcome', 
-                          make.names = 'est_type'),
-                data.table(outcome = 'parameter benchmark', `d01-d00` = -.05, `d10-d00` = -.10, `d11-d00` = -.15))
-
-kable(medians, 
-      booktabs = TRUE,
-      align = paste0(c('r', rep('c', dim(means)[2])), collapse = '')) %>% 
-  kable_styling(full_width = F, 
-                position = 'center', 
-                latex_options = c('scale_down', 'repeat_header'), 
-                repeat_header_continued = '\\textit{(Continued on next page...)}')
+# district_den_check = district_assessment[!is.na(letrs_cohort) & subject == 'EOG' & reporting_year %in% c(2019, 2021, 2022), .(agency_code, reporting_year, den)]
+# district_den_check_wide = dcast(district_den_check, agency_code ~ reporting_year, value.var = 'den')
+# district_den_check_wide[, diff_2021_2019 := `2021` - `2019`]
+# district_den_check_wide[, diff_2022_2021 := `2022` - `2021`]
+# 
+# ggplot(district_assessment[!is.na(letrs_cohort) & subject == 'EOG'], aes(x = reporting_year, y = den, group = agency_code)) +
+#   geom_line() +
+#   theme(legend.position="none")
+# 
+# ggplot(district_den_check_wide, aes(x = diff_2021_2019, y = diff_2022_2021)) +
+#   geom_point(alpha = .5)
 
 ```
 
-### $d_{1, 0} - d_{0, 0}$ (direct effect) estimates:
-
-Treatment effect parameter is -.10.
-
-```{r d10_d00, echo=FALSE}
-
-for(o in outcomes) {
-  
-  ## whole distribution
-  whole_dist = ggplot(simulated_data[est_type == 'd10-d00'], aes(x =get(o))) +
-    geom_histogram(binwidth = 0.1, alpha = .75) +
-    labs(x = 'Effect estimate', 
-         title = paste0(o, ' effect estimate, distribution over 1,000 re-simulations, d_{1, 0} - d_{0, 0}'))
-  
-  ## zoom in on [-1, 1]
-  zoom_dist = ggplot(simulated_data[est_type == 'd10-d00'], aes(x = get(o))) +
-    geom_histogram(binwidth = 0.05, alpha = .75) +
-    coord_cartesian(xlim=c(-1,1)) +
-    geom_vline(xintercept=-0.10) +
-    geom_vline(xintercept = mean(simulated_data[est_type == 'd10-d00', get(o)]), color = 'red', linetype = 'longdash') +
-    geom_vline(xintercept = median(simulated_data[est_type == 'd10-d00', get(o)]), color = 'blue', linetype = 'dotted') +
-    labs(x = 'Effect estimate', 
-         title = paste0(o, ' effect estimate, distribution over 1,000 re-simulations, d_{1, 0} - d_{0, 0} (zoom [-1, 1])'),
-         caption = 'black line: parameter value; red dashed line: mean value; blue dotted line: median value')
-  
-  print(whole_dist)
-  print(zoom_dist)
-  
-}
-
-```
-
-### $d_{0, 1} - d_{0, 0}$ (indirect effect) estimates:
-
-Treatment effect parameter is -.05.
-
-```{r d01_d00, echo=FALSE}
-
-for(o in outcomes) {
-  
-  ## whole distribution
-  whole_dist = ggplot(simulated_data[est_type == 'd01-d00'], aes(x =get(o))) +
-    geom_histogram(binwidth = 0.1, alpha = .75) +
-    labs(x = 'Effect estimate', 
-         title = paste0(o, ' effect estimate, distribution over 1,000 re-simulations, d_{0, 1} - d_{0, 0}'))
-  
-  ## zoom in on [-1, 1]
-  zoom_dist = ggplot(simulated_data[est_type == 'd01-d00'], aes(x = get(o))) +
-    geom_histogram(binwidth = 0.05, alpha = .75) +
-    coord_cartesian(xlim=c(-1,1)) +
-    geom_vline(xintercept=-0.05) +
-    geom_vline(xintercept = mean(simulated_data[est_type == 'd01-d00', get(o)]), color = 'red', linetype = 'longdash') +
-    geom_vline(xintercept = median(simulated_data[est_type == 'd01-d00', get(o)]), color = 'blue', linetype = 'dotted') +
-    labs(x = 'Effect estimate', 
-         title = paste0(o, ' effect estimate, distribution over 1,000 re-simulations, d_{0, 1} - d_{0, 0} (zoom [-1, 1])'),
-         caption = 'black line: parameter value; red dashed line: mean value; blue dotted line: median value')
-  
-  print(whole_dist)
-  print(zoom_dist)
-  
-}
-
-```
-
-### $d_{1, 1} - d_{0, 0}$ (direct + indirect effect) estimates:
-
-Treatment effect parameter is -.15.
-
-```{r d11_d00, echo=FALSE}
-
-for(o in outcomes) {
-  
-  ## whole distribution
-  whole_dist = ggplot(simulated_data[est_type == 'd11-d00'], aes(x =get(o))) +
-    geom_histogram(binwidth = 0.1, alpha = .75) +
-    labs(x = 'Effect estimate', 
-         title = paste0(o, ' effect estimate, distribution over 1,000 re-simulations, d_{1, 1} - d_{0, 0}'))
-  
-  ## zoom in on [-1, 1]
-  zoom_dist = ggplot(simulated_data[est_type == 'd11-d00'], aes(x = get(o))) +
-    geom_histogram(binwidth = 0.05, alpha = .75) +
-    coord_cartesian(xlim=c(-1,1)) +
-    geom_vline(xintercept=-0.15) +
-    geom_vline(xintercept = mean(simulated_data[est_type == 'd11-d00', get(o)]), color = 'red', linetype = 'longdash') +
-    geom_vline(xintercept = median(simulated_data[est_type == 'd11-d00', get(o)]), color = 'blue', linetype = 'dotted') +
-    labs(x = 'Effect estimate', 
-         title = paste0(o, ' effect estimate, distribution over 1,000 re-simulations, d_{1, 1} - d_{0, 0} (zoom [-1, 1])'),
-         caption = 'black line: parameter value; red dashed line: mean value; blue dotted line: median value')
-  
-  print(whole_dist)
-  print(zoom_dist)
-  
-}
-
-```

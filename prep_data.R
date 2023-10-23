@@ -28,9 +28,12 @@
   ## school-level information
   rcd_location = fread(paste0(workdatadir, 'rcd_location.csv'))
   
+  ## average daily membership
+  rcd_adm = fread(paste0(workdatadir, 'rcd_adm.csv'))
+  
   ## letrs cohort data
   letrs_cohort = fread(paste0(rawdatadir, 'letrs_cohorts.csv'))
-  
+    
   ## performance grades
   
     ## 2022-23
@@ -49,6 +52,75 @@
   ## create district file
   district = unique(rcd_location[agency_level == 'LEA', .(agency_code, name)])
   
+  ## how many schools per district?
+    
+    ### by type (elementary etc)
+    district_counts_bytype = rcd_location[agency_level == 'SCH', .(school_n = .N), by=c('category_code', 'lea_code', 'year')]
+    district_counts_bytype[category_code == 'E', category := 'elementary']
+    district_counts_bytype[category_code == 'M', category := 'middle']
+    district_counts_bytype[category_code == 'H', category := 'high']
+    district_counts_bytype[category_code == 'A', category := 'elem/middle/high']
+    district_counts_bytype[category_code == 'I', category := 'elem/middle']
+    district_counts_bytype[category_code == 'T', category := 'middle/high']
+    district_counts_bytype[, category_code := NULL]
+    
+    ### title I
+    district_counts_title1 = rcd_location[agency_level == 'SCH', .(school_n = .N), by=c('title_i', 'lea_code', 'year')]
+    district_counts_title1[title_i == 'Y', category := 'title i']
+    district_counts_title1[, title_i := NULL]
+    district_counts_title1 = district_counts_title1[category != '']
+    
+    ### all
+    district_counts_all = rcd_location[agency_level == 'SCH', .(school_n = .N), by=c('lea_code', 'year')]
+    district_counts_all[, category := 'all']
+    
+    ### combine
+    district_counts = rbind(district_counts_bytype,
+                           district_counts_title1,
+                           district_counts_all)
+    
+    ### harmonize
+    setnames(district_counts, 'lea_code', 'agency_code')
+    
+  ## how many students?
+    
+    ### filter to district values only
+    district_counts_student = rcd_adm[agency_code %like% 'LEA']
+    district_counts_student[category_code == 'E', category := 'elementary']
+    district_counts_student[category_code == 'M', category := 'middle']
+    district_counts_student[category_code == 'H', category := 'high']
+    district_counts_student[category_code == 'A', category := 'elem/middle/high']
+    district_counts_student[category_code == 'I', category := 'elem/middle']
+    district_counts_student[category_code == 'T', category := 'middle/high']
+    district_counts_student[category_code == '', category := 'all']
+    district_counts_student[, category_code := NULL]
+    
+    ### merge in school counts by type to go from average to total
+    district_counts_student = merge.data.table(district_counts_student,
+                                               district_counts,
+                                               by=c('year', 'agency_code', 'category'),
+                                               all.x = TRUE)
+    
+    ### fix errors
+      
+      ### mark missing
+      district_counts_student[, missing_n := as.integer(category != 'all' & is.na(school_n))]
+    
+      ### 870LEA: if missing, set school to 1
+      district_counts_student[category != 'all' & is.na(school_n) & agency_code == '870LEA', school_n := 1]
+      
+      ### 298LEA: school for blind/deaf, not included at this time
+      
+    ### totals
+    district_counts_student[, student_num := avg_student_num * school_n]
+    district_counts_student[category == 'all', student_num := avg_student_num]
+      
+    ### add missing counts to school count data
+    district_counts_missing = district_counts_student[missing_n == 1 & !is.na(school_n), .(year, agency_code, category, school_n)]
+    
+    district_counts = rbind(district_counts,
+                            district_counts_missing)
+    
   ## merge in LETRS cohort data
   
     ### update letrs file to match names in district file
@@ -109,21 +181,32 @@
                                          by=c('agency_code'),
                                          all.x = TRUE)
   
+  ## merge district list with school counts
+  district_counts = merge.data.table(district_counts,
+                                     district,
+                                     by=c('agency_code'),
+                                     all.x = TRUE)
+  district_counts = district_counts[!is.na(letrs_cohort)]
+  
+  ## merge district list with school counts
+  district_counts_student = merge.data.table(district_counts_student,
+                                             district,
+                                             by=c('agency_code'),
+                                             all.x = TRUE)
+  district_counts_student = district_counts_student[!is.na(letrs_cohort)]
+  
 # save data ----
 fwrite(district_assessment, paste0(workdatadir, 'district_assessment.csv'))
-  
-  
-  
-  test = district_assessment[!is.na(letrs_cohort), (mean = weighted.mean(as.numeric(glp_pct), as.numeric(den), na.rm = TRUE)), by=c('letrs_cohort', 'reporting_year', 'subject')]
-  test[, letrs_cohort := factor(letrs_cohort)]
-  
-  test_2020 = unique(test[, .(letrs_cohort, subject, reporting_year = 2020, V1 = NA)])
-  
-  test = rbind(test,
-               test_2020)
-  
-p=  ggplot(test[subject=='RD03'], aes(x = reporting_year, y = V1, color = letrs_cohort)) +
-    geom_line() + geom_point() +   theme_test()
+fwrite(district_counts, paste0(workdatadir, 'district_school_counts.csv'))
+fwrite(district_counts_student, paste0(workdatadir, 'district_student_counts.csv'))
 
-p=  ggplot(test[subject=='EOG'], aes(x = reporting_year, y = V1, color = letrs_cohort)) +
-  geom_line() + geom_point() +   theme_test()
+  
+## district codes that do not match any LETRS district
+### 269: fort liberty: admin by DOD
+### 295: innovative
+### 298: school for deaf
+### 299: virtual
+### 679: camp lejeune: admin by DOD
+### 996: DOC
+### 997: institution? special needs
+### 998: prison

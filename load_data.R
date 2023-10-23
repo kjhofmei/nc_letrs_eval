@@ -29,6 +29,10 @@
   rcd_location = data.table(read_excel(paste0(rawdatadir, 'src_datasets-SY21-22/rcd_location.xlsx')))
   fwrite(rcd_location, paste0(workdatadir, 'rcd_location.csv'))
   
+  ## average daily membership
+  rcd_adm = data.table(read_excel(paste0(rawdatadir, 'src_datasets-SY21-22/rcd_adm.xlsx')))
+  fwrite(rcd_adm, paste0(workdatadir, 'rcd_adm.csv'))
+  
   ## performance grades
   
     ## 2022-23
