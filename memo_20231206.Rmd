@@ -1,0 +1,347 @@
+---
+title: "North Carolina LETRS evaluation: preliminary results"
+author: "Kenny Hofmeister"
+output: pdf_document
+date: "2023-12-06"
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+options(knitr.kable.NA = '-')
+
+library(data.table)
+library(stringr)
+library(ggplot2)
+library(did)
+library(kableExtra)
+library(ggpubr)
+library(grid)
+library(gridExtra)
+library(Hmisc)
+
+```
+
+```{r load, include=FALSE}
+
+setwd("~/Documents/Michigan/PUBPOL 712/rp/")
+
+rawdatadir = "./raw_data/"
+workdatadir = "./working_data/"
+outdir = "./output/"
+codedir = "./code/"
+
+district_school_counts = fread(paste0(workdatadir, 'prep_district_school_counts_asamp.csv'))
+district_student_counts = fread(paste0(workdatadir, 'prep_district_student_counts_asamp.csv'))
+district_demos = fread(paste0(workdatadir, 'prep_district_demographics.csv'))
+district_teacher = fread(paste0(workdatadir, 'prep_district_teacher.csv'))
+letrs_cohorts = fread(paste0(workdatadir, 'prep_letrs_cohorts.csv'))
+
+analysis_district_file = fread(paste0(workdatadir, 'prep_did_analysis_district_data.csv')) 
+
+```
+
+```{r prep, include=FALSE}
+
+# identify sample of schools with test scores in all five years
+analysis_district_file[, count := .N, by=c('lea_code', 'subject')]
+balanced_for_some_test = unique(analysis_district_file[count == 5 & exclude == 0, .(lea_code)])
+
+# create summary table
+
+  ## combine all fields needed for summary tables
+  summ_table = rbind(district_demos[year == 2021, .(year, lea_code, field = subgroup, value = pct)],
+                     district_teacher[year == 2021, .(year, lea_code, field = 'New teachers', value = pct_beg_teachers)],
+                     fill = TRUE)
+  
+# merge in letrs cohorts
+
+  ## school counts
+  district_school_counts = merge.data.table(district_school_counts,
+                                             letrs_cohorts,
+                                             by=c('lea_code'),
+                                             all.x = TRUE)
+  district_school_counts[is.na(letrs_cohort) & lea_code == 'CH', letrs_cohort := 0]
+  
+  ## student counts
+  district_student_counts = merge.data.table(district_student_counts,
+                                             letrs_cohorts,
+                                             by=c('lea_code'),
+                                             all.x = TRUE)
+  district_student_counts[is.na(letrs_cohort) & lea_code == 'CH', letrs_cohort := 0]
+
+  ## summary statistics
+  summ_table = merge.data.table(summ_table,
+                                letrs_cohorts,
+                                by=c('lea_code'),
+                                all.x = TRUE)
+  summ_table[is.na(letrs_cohort) & grepl('^CH', lea_code), letrs_cohort := 0]
+  
+## merge in analytical sample indicator
+
+  ## summary statistics
+  summ_table = merge.data.table(summ_table,
+                                balanced_for_some_test[, .(lea_code, asamp = 1)],
+                                by=c('lea_code'),
+                                all.x = TRUE)
+  summ_table[is.na(asamp), asamp := 0]
+  
+# get weighted means of proficient by year/subject/cohort
+summ_table_scores_mean = analysis_district_file[count == 5 & exclude == 0 & !is.na(letrs_cohort) & year == 2021 & subject %in% c('RD03', 'RD04', 'RD05', 'RD06', 'RD07', 'RD08'), .(mean = weighted.mean(as.numeric(glp_pct_min_imp), as.numeric(den), na.rm = TRUE)), by=c('letrs_cohort', 'year', 'subject')]
+summ_table_scores_mean[, mean := as.character(round(mean, 1))]
+summ_table_scores_mean = dcast(summ_table_scores_mean, letrs_cohort ~ subject, value.var = 'mean')
+summ_table_scores_mean[, stat := 'mean']
+
+summ_table_scores_sd = analysis_district_file[count == 5 & exclude == 0 & !is.na(letrs_cohort) & year == 2021 & subject %in% c('RD03', 'RD04', 'RD05', 'RD06', 'RD07', 'RD08'), .(sd = sqrt(wtd.var(as.numeric(glp_pct_min_imp), as.numeric(den), na.rm = TRUE))), by=c('letrs_cohort', 'year', 'subject')]
+summ_table_scores_sd[, sd := paste0('(',as.character(round(sd, 1)), ')')]
+summ_table_scores_sd = dcast(summ_table_scores_sd, letrs_cohort ~ subject, value.var = 'sd')
+summ_table_scores_sd[, stat := 'sd']
+
+summ_scores_analysis = rbind(summ_table_scores_mean,
+                      summ_table_scores_sd)
+
+# create summ stats table: analytical sample
+
+summ_table_analysis_mean = summ_table[asamp == 1, .(mean = mean(value)), by=c('letrs_cohort', 'field')]  
+summ_table_analysis_mean[, mean := as.character(round(mean, 1))]
+summ_table_analysis_mean = dcast(summ_table_analysis_mean, letrs_cohort ~ field, value.var = 'mean')
+summ_table_analysis_mean[, stat := 'mean']
+
+summ_table_analysis_sd = summ_table[asamp == 1, .(sd = sd(value)), by=c('letrs_cohort', 'field')]  
+summ_table_analysis_sd[, sd := paste0('(',as.character(round(sd, 1)), ')')]
+summ_table_analysis_sd = dcast(summ_table_analysis_sd, letrs_cohort ~ field, value.var = 'sd')
+summ_table_analysis_sd[, stat := 'sd']
+
+summ_analysis = rbind(summ_table_analysis_mean,
+                      summ_table_analysis_sd)
+
+summ_analysis = merge.data.table(summ_analysis,
+                                 summ_scores_analysis,
+                                 by=c('letrs_cohort', 'stat'))
+
+setorder(summ_analysis, letrs_cohort, stat)
+setcolorder(summ_analysis, c('letrs_cohort', 'black', 'hispanic', 'white', 'EDS', 'New teachers'))
+
+summ_analysis[, letrs_cohort := as.character(letrs_cohort)]
+summ_analysis[letrs_cohort == '0', letrs_cohort := 'C']
+
+summ_analysis[stat == 'sd', letrs_cohort := '']
+summ_analysis[, stat := NULL]
+
+# prep school counts
+district_school_counts_bycohort = district_school_counts[!is.na(letrs_cohort), .(total = sum(school_n, na.rm = TRUE)), by=c('letrs_cohort', 'year', 'category')]
+district_school_counts_bycohort[, category := factor(category, levels = c('elementary', 'elem/middle', 'elem/middle/high', 'middle', 'middle/high', 'high', 'title i', 'all'))]
+setorder(district_school_counts_bycohort, category)
+district_school_counts_bycohort_wide = dcast(district_school_counts_bycohort, letrs_cohort + year ~ category, value.var = 'total')
+district_school_counts_bycohort_wide[, `title i` := round(`title i` / all, 2)]
+setorder(district_school_counts_bycohort_wide, year, letrs_cohort)
+
+district_school_counts_bycohort_wide[, letrs_cohort := as.character(letrs_cohort)]
+district_school_counts_bycohort_wide[letrs_cohort == '0', letrs_cohort := 'C']
+
+
+
+# prep student counts
+district_student_counts_bycohort = district_student_counts[!is.na(letrs_cohort), 
+                                                           .(total = sum(avg_student_num),  
+                                                             mean = round(mean(avg_student_num)),
+                                                             median = round(median(avg_student_num))),
+                                                           by=c('letrs_cohort', 'year', 'category')]
+district_student_counts_bycohort = district_student_counts_bycohort[category %in% c('all', 'elementary') & year %in% seq(2018, 2022)]
+district_student_counts_bycohort_wide = dcast(district_student_counts_bycohort, letrs_cohort + year ~ category, value.var = c('total', 'mean', 'median'))
+district_student_counts_bycohort_wide[, total_elementary := NULL]
+setorder(district_student_counts_bycohort_wide, year, letrs_cohort)
+
+district_student_counts_bycohort_wide[, letrs_cohort := as.character(letrs_cohort)]
+district_student_counts_bycohort_wide[letrs_cohort == '0', letrs_cohort := 'C']
+
+district_student_counts_bycohort_wide[letrs_cohort == 'C', mean_all := NA]
+district_student_counts_bycohort_wide[letrs_cohort == 'C', median_all := NA]
+```
+
+## Introduction
+
+This note outlines my work on an evaluation of the implementation of LETRS training in North Carolina, and makes a recommendation on whether to request student-level data from the state. I provide background on the intervention, describe the analytic sample and motivate the difference-in-differences estimator, and discuss results. I conclude with a discussion of possible issues with the analysis and next steps.
+
+I believe there is some value in requesting student-level data: my analysis so far has uncovered non-significant treatment effects, but the estimates are positive, trending in the direction we might expect, and are of a reasonable magnitude. Student-level data will overcome some minor data issues (outlined below), may allow me to assess some threats to internal validity, and could help unpack heterogeneous treatment effects.
+
+## Background
+
+In spring of 2021, the North Carolina state legislature passed Senate Bill 387, the "Excellent Public Schools Act of 2021," which mandated that the North Carolina Department of Instruction "Provide a training program to educators and administrators working with children in the NC Pre-K program to ensure developmentally appropriate instruction grounded in the Science of Reading and outcomes promoting reading achievement in students." The Language Essentials for Teachers of Reading and Spelling (LETRS) curriculum was chosen by the state to meet this requirement. 
+
+The LETRS trainings are implemented at the district-level, and all pre-K through fifth grade teachers are required to participate. Training takes place over the course of two years, including during the school year, and roll-out was staggered into three cohorts: fall 2021 - spring 2023 (Cohort 1), winter 2021 - winter 2023 (Cohort 2), and summer 2022 - spring 2024 (Cohort 3). Districts were permitted to select their cohort, and 29 joined Cohort 1, 29 joined Cohort 2, and 58 joined Cohort 3 (though data are only available for 57). Schools under the administration of the Department of Defense, certain special needs and hospital-based schools, and those run by the Department of Corrections were not included in the training. Charters were not included in the legislation, and so were not required to participate in the training. The Department of Instruction has indicated that some charter teachers have joined the trainings, however. 
+
+## Sample and variable definitions
+
+All data are publicly available and were downloaded from the [NCDPI website](https://www.dpi.nc.gov/data-reports). The sample includes all 115 public school districts in North Carolina, and all charter schools with at least one balanced panel of test score data. The data, then, are a mix of district-level observations (which make up the LETRS cohorts) and school-level observations (which make up the set of potential comparison units). The primary outcome is proficiency on the End-of-Grade standardized reading test, which is determined by scoring at level three (out of five) or above. The test was redesigned prior to the 2017-18 school year, so this is the first year for which I measure pre-treatment outcomes. The last year available is 2022-23, and there is no testing data available for 2019-20. 
+
+Districts are not missing any data (though this masks some heterogeneity in missingness at the school level, as not all schools report scores for every year). I only include charter schools that have data for all five years for at least one test. North Carolina saw a large influx of new charter schools in the years immediately after the beginning of the pandemic, but these are not included as they do not have the full set of test data available. A small number of charters (17 total) have left- or right-censored proficiency proportions for some test scores (the data report '5' and '95' for proportions above those thresholds, respectively). Within test/year combination, the incidence is low (e.g., 2 charters for third grade reading proficiency in 2022). I use two imputations, one as the maximum (5, 100) values and the other as the minimum (0, 95) values, to ensure that the results are not sensitive to this censoring, and report results from the minimum imputation below.
+
+## Sample descriptives
+
+The following three tables describe the sample in SY2020-2021, the school year immediately prior to the beginning of LETRS implementation. The first table describes the number of schools in each cohort by type, the second describes how many students appear in each cohort (in total, on average per district, and on average per elementary school), and the third table provides basic descriptives at the district-level (school-level) for each LETRS cohort (group of charter schools). Charter school structure differs from non-charter structure: there are very few schools that only serve elementary schools (the first column of Table 1). The average/median elementary school size is similar, but there are not many elementary schools being compared among the charter sample.
+
+There are 29 districts in cohort 1, 29 in cohort 2, and 57 in cohort 3. These numbers are constant across the descriptive tables below and within the analytical sample. The number of charters included in the sample varies by the test score considered, as not all charters administer all grades tested. There are 207 total charters, and between 177 and 189 with a complete set of test scores for grades 3 through 8, represented below.
+
+### Selection issues
+
+Table 3 gives a sense of possible selection issues with directly comparing cohorts to each other or to the set of charter schools. In particular, LETRS cohorts are fairly dissimilar from each other in terms of proportion of students testing proficient on tests, and from charters in terms of proportion of economically disadvantaged students, proportion of new teachers in this school year, and test score proficiency. The third cohort includes smaller districts with larger schools. It also has lower proportions of proficient students in all grades, which suggests some negative selection into take-up timing. However, the second cohort has the highest proportion of proficient students, which makes it difficult to tell a straightforward story about selection in this case. 
+
+In any case, these descriptives indicate that direct comparisons between cohorts and charters, even controlling for observables, is likely to suffer from substantial bias. To address these concerns about selection bias, I introduce a difference-in-differences estimator below.
+
+```{r tables, echo=FALSE, warning=FALSE}
+kable(district_school_counts_bycohort_wide[year %in% c(2021), -c('year', 'high', 'title i')],
+      booktabs = TRUE,
+      align = paste0(c('r', rep('c', dim(district_school_counts_bycohort_wide)[2])), collapse = ''),
+      col.names = c('LETRS', 'E', 'E/M', 'E/M/H', 'M', 'M/H', 'All'),
+      caption = 'School counts, SY2020-21') %>%
+  kable_styling(full_width = F,
+                position = 'center',
+                latex_options = "HOLD_position")%>%
+  footnote(footnote_as_chunk = TRUE,
+           threeparttable = TRUE,
+           general = 'C = charters. Only charters with at least one full set of test scores (covering all five years of the study period) are included.')
+
+
+kable(district_student_counts_bycohort_wide[year == '2021', -c('year')],
+      booktabs = TRUE,
+      align = paste0(c('r', rep('c', dim(district_student_counts_bycohort_wide)[2])), collapse = ''),
+      col.names = c('LETRS', 'Total, all schools', 'District', 'Elementary', 'District', 'Elementary'),
+      caption = 'Student counts, SY2020-21') %>%
+  kable_styling(full_width = F,
+                position = 'center',
+                latex_options = "HOLD_position") %>%
+ add_header_above(c(' ' = 2, 'Mean enrl' = 2, 'Median enrl' = 2)) %>%
+   footnote(footnote_as_chunk = TRUE,
+            threeparttable = TRUE,
+            general = 'C = charters. Only charters with at least one full set of test scores (covering all five years of the study period) are included.')
+
+
+kable(summ_analysis,
+      booktabs = TRUE,
+      align = paste0(c('r', rep('c', dim(summ_analysis)[2])), collapse = ''),
+      col.names = c('LETRS', 'Blk', 'Hisp', 'Wht', 'Ec. Dis.', 'New Tea.', 'RD03', 'RD04', 'RD05', 'RD06', 'RD07', 'RD08'),
+      caption = 'Descriptives, SY2020-21') %>%
+  kable_styling(full_width = F,
+                position = 'center',
+                latex_options = "HOLD_position") %>%
+  group_rows('', 1, 2) %>%
+  group_rows('', 3, 4) %>%
+  group_rows('', 5, 6) %>%
+  group_rows('', 7, 8) %>%
+ add_header_above(c(' ' = 1, 'Race' = 3, ' ' = 2, '% proficient on stand. tests' = 6)) %>%
+  footnote(footnote_as_chunk = TRUE,
+            threeparttable = TRUE,
+            general = 'C = charters. Only charters with at least one full set of test scores (covering all five years of the study period) are included. Race, economic disadvantaged, new teacher proportion are not weighted by school size, test proficiency percentage columns are weighted by number of test-takers.')
+
+```
+
+## Effect estimates
+
+### The difference-in-differences estimator
+
+I use the difference-in-differences estimator developed by Callaway & Sant'Anna (2021) to estimate the average treatment on the treated (ATT) for all three LETRS cohorts. The primary advantages of their estimator are that it allows for treatment effect heterogeneity over time, accommodates data from multiple time periods in the difference-in-differences analysis, and avoids comparing newly to already treated units. The first two are extensions of the standard two-way fixed effects (TWFE) estimator, and the third overcomes an serious issue with using TWFE with multiple time periods. Identification relies on two assumptions: no anticipation (which can be relaxed), and parallel trends between treated and untreated units (more on this later). Per Callaway & Sant'Anna (2021), the ATT estimated for each cohort is:
+
+$$ATT(g, t)=E[Y_t(g) - Y_t(0)|G = g]$$
+
+where $g$ is the first period in which a group was treated, $t$ is the period for which the ATT is estimated, $Y_t(g)$ is the outcome for the unit in time $t$ when entering treatment in time $g$, and $Y_t(0)$ is the outcome for the unit in the counterfactual world in which the unit was never treated. Of course we do not observe the latter term, but if the assumptions above hold, this value is identified from observed outcomes of the not-yet-treated and never treated groups at time $t$. 
+
+### Results
+
+In this analysis, charters are never treated (more on this later), and act as the comparison group for all cohorts. Cohorts 1 and 2 technically enter treatment in different periods, but within the same school year. Since I only observe outcomes data at the school year level, their value of $g = 2022$ is the same, though I estimate separate effects for each cohort. Cohort 3 has a value of $g = 2023$. Each observation is weighted according to the number of students at the district/school who took the test in that year.
+
+Each plot below visualizes ATT estimates on the proportion of students who test proficient on standardized reading tests. 'RD03' is the third grade test, 'RD04' is the fourth grade test, and so forth. Each plot has three panels: the first represents the results for Cohort 1, the second for Cohort 2, and the third for Cohort 3. Red effect estimates represent pre-treatment ATTs, and blue represent post-treatment ATTs. Cohorts 1 and 2 have two years of post-treatment data, while Cohort 3 has only one. 
+
+The pre-treatment ATT estimates are generally insignificant, though confidence intervals tend to be wide. This is evidence for the parallel trends assumption, though of course this assumption cannot be verified directly. The other assumption, no anticipation, seems likely to hold for Cohorts 1 and 2: the training was not legislated until the spring of 2021, around the time students took the most recent pre-treatment standardized tests and a few months before the trainings began. Anticipation effects for Cohort 3 are possible, given the longer gap between announcement and implementation. It is also possible that certain districts were anticipating the policy change ahead of the legislature taking it up; this is a direction for future work that I would like to investigate.
+
+The estimated effects on third through fifth grade proficiency are positive, though small and not statistically significant. Only fourth grade proficiency in Cohort 1 approaches significance. Yet, this seems to be consistent with the roll-out of the training, which takes place over two years. It was also possible that the training could have resulted in lower test scores contemporaneously, as teachers are required to undertake the training in addition to their regular duties. That this does not appear to happen seems meaningful.
+
+I estimated effects on sixth through eighth grade test scores as both a placebo test and an exploratory spill-over analysis. On one hand, the trainings only include teachers through fifth grade, so there should not be an immediate direct effect on test scores in upper grades. As students age, gains from the trainings could persist into later years, however. I could also imagine both positive and negative spillovers from the training: positive, if teachers within schools share information, and negative, if the training time costs are disruptive to the school atmosphere. I estimate noisy null effects on these outcomes, which do not support either story.
+
+\newpage
+
+```{r did_ests, echo=FALSE, warning=FALSE, fig.height=7, fig.align='center'}
+
+# outcomes
+est_vars = c('RD03', 'RD04', 'RD05', 'RD06', 'RD07', 'RD08')
+
+# cohorts to loop through
+cohorts = c(1, 2, 3)
+
+for(v in est_vars) {
+  
+  ## object to save results
+  est_list = list()
+  
+  for(c in cohorts) {
+    
+    ## diff in diff estimator
+    est_list[[c]] = att_gt(yname = "glp_pct_min_imp",
+                           gname = "first_treat",
+                           idname = "lea_code_num",
+                           tname = "year",
+                           xformla = ~1,
+                           data = analysis_district_file[exclude == 0 & subject == v & letrs_cohort %in% c(0, c)],
+                           weightsname = 'den'
+                           )
+    
+  }
+  
+  ## figure out max CI bound
+  max_bound = max(round(max(max(est_list[[1]]$att) + est_list[[1]]$se) * 1.96),
+                  round(max(max(est_list[[2]]$att) + est_list[[2]]$se) * 1.96),
+                  round(max(max(est_list[[3]]$att) + est_list[[3]]$se) * 1.96),
+                  abs(round(max(max(est_list[[1]]$att) - est_list[[1]]$se) * 1.96)),
+                  abs(round(max(max(est_list[[2]]$att) - est_list[[2]]$se) * 1.96)),
+                  abs(round(max(max(est_list[[3]]$att) - est_list[[3]]$se) * 1.96)))
+  
+  ## plot effects
+  did_plot1 = ggdid(est_list[[1]], title = 'Cohort 1', ylim = c(-max_bound, max_bound))
+  did_plot2 = ggdid(est_list[[2]], title = 'Cohort 2', ylim = c(-max_bound, max_bound)) 
+  did_plot3 = ggdid(est_list[[3]], title = 'Cohort 3', ylim = c(-max_bound, max_bound), xlab = 'School year')
+  
+  ## combine into single plot
+  plot = ggarrange(did_plot1, 
+                   did_plot2, 
+                   did_plot3, 
+                   nrow=3, 
+                   common.legend = TRUE, 
+                   legend = 'bottom', 
+                   label.x = 'School year', 
+                   label.y = 'Percentage point')
+  
+  ## print plot with title, axis labels
+  print(annotate_figure(plot, 
+                        top=textGrob(paste0('Average treatment on treated: percent proficient on ', v, ' standardized test')),
+                        left=textGrob('ATT est. (percentage points)', rot = 90, vjust = 1, gp = gpar(cex = 1))))
+  
+}
+
+```
+
+### Robustness checks
+
+To ensure that the results here are not sensitive to modeling decisions, I compared them to those estimated with slightly different approaches:
+
+* Using maximum imputation values for censored outcomes: no difference
+* Using school-level data for the LETRS cohorts and clustering variance at the district level: substantially larger confidence intervals, but no difference otherwise
+* Relaxing no anticipation to no anticipation within one year for Cohort 3: slightly larger positive effects, but not significant
+* Dropping pre-pandemic years and using 2020-21 as the only common pre-treatment school0 year: no difference
+
+### Possible issues
+
+A number of factors might confound a straightforward interpretation of these effects. First, I cannot directly observe how individual students and teachers reacted to the announcement and implementation of the intervention. If, for example, more experienced teachers were induced to retire because they did not want to undertake two years of training on new material, the effect of the training would be confounded with the effect of teacher turnover. On the other hand, some parents may respond by pulling their children out of public schools and enrolling them at charters, or vice-versa. 
+
+Another possible issue is charter take-up of the LETRS training. Per reports by the North Carolina State Board of Education, 200 teachers and 100 administrators from charter schools have participated in the training to date. I am not able to determine which charters have already participated, and so the ATTs may be underestimates. Moreover, if all charters eventually do participate, the difference-in-differences approach will not be able to estimate longer-term effects. 
+
+There are some important limitations to the data. First, we cannot observe test data in the 2019-20 school year, as no students were tested because of the onset of the pandemic. It is unclear if or how this gap in the data affects the difference-in-differences estimator. To test the robustness of the estimates, I used 2021 as the single pre-treatment year, and this resulted in qualitatively similar effect estimates. There are also some left- and right-censored outcomes, as noted above.
+
+Finally, the beginning of the intervention is contemporaneous with the height of the COVID-19 pandemic, which profoundly affected students and school systems. Theoretically, the difference-in-differences estimator should net out shocks common to all units, but I am still concerned about possible confounds. 
+
+## Next steps
+
+Of the issues above, student-level data could help understand possible selection into/out of the public school sample, as well as avoid censoring issues and allow heterogeneous treatment effect estimates for different groups within schools. If teacher employment records are available, they could also help address selection concerns. Finally, I also want to try to identify which charters have taken up the LETRS training to account for this in the difference-in-differences estimates. 
+
+## Works cited
+
+Callaway, Brantly; Sant’Anna, Pedro H.C. (2021). Difference-in-Differences with multiple time periods. *Journal of econometrics*. Amsterdam: Elsevier B.V.
