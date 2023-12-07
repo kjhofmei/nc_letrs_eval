@@ -48,11 +48,28 @@
   sa_18 = fread(paste0(workdatadir, 'school_assessment_18.csv'))
   
 # prep data ----
+  
+  ## attendance data
+  
+    ### drop state-wide numbers
+    rcd_adm = rcd_adm[agency_code != 'NC-SEA']
+  
+    ### add LEA code
+    rcd_adm[!grepl('[A-Z]', str_sub(agency_code, 1, 3)), lea_code := paste0(str_sub(agency_code, 1, 3), 'LEA')]
     
+    ### merge in school type
+    rcd_adm = merge.data.table(rcd_adm,
+                               rcd_location[, .(year, agency_code, category_code_temp = category_code)],
+                               by=c('year', 'agency_code'),
+                               all.x = TRUE)
+    
+    rcd_adm[category_code == '', category_code := category_code_temp]
+    rcd_adm[, category_code_temp := NULL]
+  
   ## create district file
   district = unique(rcd_location[agency_level == 'LEA', .(agency_code, name)])
   
-  ## how many schools per district?
+  ## how many schools per district? 
     
     ### by type (elementary etc)
     district_counts_bytype = rcd_location[agency_level == 'SCH', .(school_n = .N), by=c('category_code', 'lea_code', 'year')]
@@ -81,6 +98,13 @@
     
     ### harmonize
     setnames(district_counts, 'lea_code', 'agency_code')
+    
+  ## how many schools in attendance data?
+    
+    ### count
+    district_counts_bytype_adm = rcd_adm[!(agency_code %like% 'LEA') & !is.na(lea_code), 
+                                         .(school_n_adm = .N), 
+                                         by=c('category_code', 'lea_code', 'year')]
     
   ## how many students?
     
