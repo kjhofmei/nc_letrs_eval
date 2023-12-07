@@ -24,22 +24,42 @@ workdatadir = "./working_data/"
 outdir = "./output/"
 codedir = "./code/"
 
-district_assessment = fread(paste0(workdatadir, 'district_assessment.csv'))
-district_school_counts = fread(paste0(workdatadir, 'district_school_counts.csv'))
-district_student_counts = fread(paste0(workdatadir, 'district_student_counts.csv'))
+district_assessment = fread(paste0(workdatadir, 'prep_district_assessment.csv'))
+district_school_counts = fread(paste0(workdatadir, 'prep_district_school_counts.csv'))
+district_student_counts = fread(paste0(workdatadir, 'prep_district_student_counts.csv'))
+letrs_cohorts = fread(paste0(workdatadir, 'prep_letrs_cohorts.csv'))
 
 ```
 
 ```{r prep, include=FALSE}
 
+# merge in letrs cohorts
+district_student_counts = merge.data.table(district_student_counts,
+                                           letrs_cohorts,
+                                           by=c('lea_code'),
+                                           all.x = TRUE)
+district_student_counts[is.na(letrs_cohort) & lea_code == 'CH', letrs_cohort := 0]
+
+district_school_counts = merge.data.table(district_school_counts,
+                                           letrs_cohorts,
+                                           by=c('lea_code'),
+                                           all.x = TRUE)
+district_school_counts[is.na(letrs_cohort) & lea_code == 'CH', letrs_cohort := 0]
+
+district_assessment = merge.data.table(district_assessment,
+                                           letrs_cohorts,
+                                           by=c('lea_code'),
+                                           all.x = TRUE)
+district_assessment[is.na(letrs_cohort) & lea_code == 'CH', letrs_cohort := 0]
+
 # get weighted means of proficient by year/subject/cohort
-stats = district_assessment[!is.na(letrs_cohort), .(mean = weighted.mean(as.numeric(glp_pct), as.numeric(den), na.rm = TRUE)), by=c('letrs_cohort', 'reporting_year', 'subject')]
+stats = district_assessment[!is.na(letrs_cohort), .(mean = weighted.mean(as.numeric(glp_pct), as.numeric(den), na.rm = TRUE)), by=c('letrs_cohort', 'year', 'subject')]
 
 # convert cohort to factor for visualization
 stats[, letrs_cohort := factor(letrs_cohort)]
 
 # add missing values for 2020  
-stats_2020 = unique(stats[, .(letrs_cohort, subject, reporting_year = 2020, mean = NA)])
+stats_2020 = unique(stats[, .(letrs_cohort, subject, year = 2020, mean = NA)])
 
 stats = rbind(stats,
               stats_2020)
@@ -47,7 +67,7 @@ stats = rbind(stats,
 # define variables to plot
 plot_vars = c('RD03', 'RD04', 'RD05', 'RD06', 'RD07', 'RD08', 'EOG')
 
-counts = district_assessment[!is.na(letrs_cohort), .(count = weighted.mean(as.numeric(glp_pct), as.numeric(den), na.rm = TRUE)), by=c('letrs_cohort', 'reporting_year', 'subject')]
+counts = district_assessment[!is.na(letrs_cohort), .(count = weighted.mean(as.numeric(glp_pct), as.numeric(den), na.rm = TRUE)), by=c('letrs_cohort', 'year', 'subject')]
 
 ```
 
@@ -74,7 +94,7 @@ A few things stand out:
 ```{r tab, echo=FALSE}
 
 # prep school counts
-district_school_counts_bycohort = district_school_counts[, .(total = sum(school_n, na.rm = TRUE)), by=c('letrs_cohort', 'year', 'category')]
+district_school_counts_bycohort = district_school_counts[!is.na(letrs_cohort), .(total = sum(school_n, na.rm = TRUE)), by=c('letrs_cohort', 'year', 'category')]
 district_school_counts_bycohort[, category := factor(category, levels = c('elementary', 'elem/middle', 'elem/middle/high', 'middle', 'middle/high', 'high', 'title i', 'all'))]
 setorder(district_school_counts_bycohort, category)
 district_school_counts_bycohort_wide = dcast(district_school_counts_bycohort, letrs_cohort + year ~ category, value.var = 'total')
@@ -102,7 +122,7 @@ kable(district_school_counts_bycohort_wide[year %in% c(2021), -c('year')],
                 position = 'center')
 
 # prep student counts
-district_student_counts_bycohort = district_student_counts[, .(total = sum(avg_student_num),
+district_student_counts_bycohort = district_student_counts[!is.na(letrs_cohort), .(total = sum(avg_student_num),
                                                                mean = round(mean(avg_student_num)),
                                                                median = round(median(avg_student_num))),
                                                            by=c('letrs_cohort', 'year', 'category')]
@@ -118,11 +138,11 @@ kable(district_student_counts_bycohort_wide[, -c('year')],
       caption = 'Student counts') %>% 
   kable_styling(full_width = F, 
                 position = 'center') %>%
-  group_rows('2018', 1, 3) %>%
-  group_rows('2019', 4, 6) %>%
-  group_rows('2020', 7, 9) %>%
-  group_rows('2021', 10, 12) %>%
-  group_rows('2022', 13, 15) %>%
+  group_rows('2018', 1, 4) %>%
+  group_rows('2019', 5, 8) %>%
+  group_rows('2020', 9, 12) %>%
+  group_rows('2021', 13, 16) %>%
+  group_rows('2022', 17, 20) %>%
   add_header_above(c(' ' = 2, 'Mean enrl' = 2, 'Median enrl' = 2))
 
 ```
@@ -139,7 +159,7 @@ It is difficult to assess the parallel trends assumption from these plots: the p
 
 for(v in plot_vars) {
   
-  p = ggplot(stats[subject == v], aes(x = reporting_year, y = mean, group = letrs_cohort, color = letrs_cohort)) +
+  p = ggplot(stats[subject == v], aes(x = year, y = mean, group = letrs_cohort, color = letrs_cohort)) +
     geom_line(aes(linetype = letrs_cohort)) + 
     geom_point() +   
     theme_classic() + 
@@ -148,8 +168,8 @@ for(v in plot_vars) {
          title = paste0(v, ' percent at/above level 3, weighted average within cohort'),
          caption = 'School year 2018 = 2017/18') +
     labs(color  = 'LETRS cohort', linetype = 'LETRS cohort') +
-    scale_y_continuous(breaks = seq(35, 65, 5)) +
-    coord_cartesian(ylim=c(35,65))
+    scale_y_continuous(breaks = seq(35, 75, 5)) +
+    coord_cartesian(ylim=c(35,75))
 
   print(p)
   
@@ -160,12 +180,12 @@ for(v in plot_vars) {
 
 ```{r den_check, echo=FALSE}
 
-# district_den_check = district_assessment[!is.na(letrs_cohort) & subject == 'EOG' & reporting_year %in% c(2019, 2021, 2022), .(agency_code, reporting_year, den)]
-# district_den_check_wide = dcast(district_den_check, agency_code ~ reporting_year, value.var = 'den')
+# district_den_check = district_assessment[!is.na(letrs_cohort) & subject == 'EOG' & year %in% c(2019, 2021, 2022), .(agency_code, year, den)]
+# district_den_check_wide = dcast(district_den_check, agency_code ~ year, value.var = 'den')
 # district_den_check_wide[, diff_2021_2019 := `2021` - `2019`]
 # district_den_check_wide[, diff_2022_2021 := `2022` - `2021`]
 # 
-# ggplot(district_assessment[!is.na(letrs_cohort) & subject == 'EOG'], aes(x = reporting_year, y = den, group = agency_code)) +
+# ggplot(district_assessment[!is.na(letrs_cohort) & subject == 'EOG'], aes(x = year, y = den, group = agency_code)) +
 #   geom_line() +
 #   theme(legend.position="none")
 # 
