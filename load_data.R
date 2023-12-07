@@ -33,6 +33,16 @@
   rcd_adm = data.table(read_excel(paste0(rawdatadir, 'src_datasets-SY21-22/rcd_adm.xlsx')))
   fwrite(rcd_adm, paste0(workdatadir, 'rcd_adm.csv'))
   
+  ## teacher counts
+  rcd_eq = data.table(read_excel(paste0(rawdatadir, 'src_datasets-SY21-22/rcd_eq.xlsx')))
+  fwrite(rcd_eq, paste0(workdatadir, 'rcd_eq.csv'))
+  
+  ## demographics 
+  
+    ### economically disadvantaged students
+    rcd_acc_eds = data.table(read_excel(paste0(rawdatadir, 'src_datasets-SY21-22/rcd_acc_eds.xlsx')))
+    fwrite(rcd_acc_eds, paste0(workdatadir, 'rcd_acc_eds.csv'))
+    
   ## performance grades
   
     ## 2022-23
